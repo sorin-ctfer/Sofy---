@@ -118,6 +118,7 @@ class PeerConnection(threading.Thread):
         self.group_name = group_name # If set, this connection is for a specific group
         self.running = True
         self.daemon = True
+        self.dark_mode = False # Dark mode flag
         self.last_local_files = set() # Track for deletion
 
     def run(self):
@@ -306,20 +307,24 @@ class PeerConnection(threading.Thread):
         current_filenames = set(my_files.keys())
         
         # 2. Check for deletions
+        # Only report deletions if we have synced at least once (last_local_files is not empty)
+        # Or if we know for sure it was there.
+        # Issue: if last_local_files is populated from disk on startup, and file is deleted while running.
+        
+        # If last_local_files is empty (first run), we shouldn't detect deletions yet?
+        # No, we populated it in run().
+        
         deleted = self.last_local_files - current_filenames
         for fname in deleted:
+            # Check if it was really deleted or just never there?
+            # It was in last_local_files, so it was there.
+            
             # Send DELETE command
-            print(f"Detected deletion: {fname}, telling peer.")
+            # print(f"Detected deletion: {fname}, telling peer.") # Detected loop logging
             PeerProtocol.send_json(self.sock, {
                 "type": CMD_DELETE_FILE,
                 "filename": fname
             })
-            # If we are Host, we should also relay this deletion to other members?
-            # No, if I (Host) detect local deletion, I tell this connected Member.
-            # I must also tell ALL OTHER Members.
-            # sync_step runs per connection.
-            # If I delete locally, ALL connections will see it missing and send DELETE.
-            # So this is handled automatically for Host -> All Members.
             
         # 3. Update last known state
         self.last_local_files = current_filenames
@@ -333,13 +338,29 @@ class PeerConnection(threading.Thread):
     def handle_msg(self, msg):
         msg_type = msg.get("type")
         
+        # In Dark Mode, ignore chat and other non-file commands
+        if self.dark_mode:
+            allowed_types = [CMD_SYNC_LIST, CMD_REQ_FILE, CMD_FILE_HEADER, CMD_DELETE_FILE, CMD_AUTH, CMD_AUTH_OK, CMD_AUTH_FAIL]
+            if msg_type not in allowed_types:
+                return
+
         if msg_type == CMD_SYNC_LIST:
             my_folder = self.get_sync_folder()
             my_files = self.fm.scan_folder(my_folder)
             remote_files = msg["files"]
-            to_download = self.fm.resolve_conflicts(my_files, remote_files)
+            
+            # Resolve conflicts and identify zombie files
+            to_download, to_delete_remotely = self.fm.resolve_conflicts(my_files, remote_files, my_folder)
+            
             for fname in to_download:
                 self.request_file(fname)
+            
+            for fname in to_delete_remotely:
+                # Tell the peer to delete this zombie file
+                PeerProtocol.send_json(self.sock, {
+                    "type": CMD_DELETE_FILE,
+                    "filename": fname
+                })
         
         elif msg_type == CMD_DELETE_FILE:
             fname = msg["filename"]
@@ -466,8 +487,15 @@ class PeerManager:
         # Bastion Mode Flag
         self.is_bastion = False
         
+        self.dark_mode = False
+
         # UI Callback
         self.callback = None
+
+    def set_dark_mode(self, enabled):
+        self.dark_mode = enabled
+        for conn in self.connections:
+            conn.dark_mode = enabled
 
     def emit(self, event_type, data):
         if self.callback:
@@ -490,6 +518,7 @@ class PeerManager:
                 client_sock, addr = self.server_sock.accept()
                 # Pass self (manager) instead of self.fm
                 conn = PeerConnection(client_sock, addr, self, self.username, self.password)
+                conn.dark_mode = self.dark_mode
                 conn.start()
                 self.connections.append(conn)
             except OSError:

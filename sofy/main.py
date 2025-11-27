@@ -133,7 +133,104 @@ def main():
 
                 # --- GLOBAL MODE ---
                 if current_group_mode is None:
-                    if cmd == "exit":
+                    if cmd == "darkusing":
+                        confirm = input("Warning: This will hide the interface and run in background. Only scheduled file sharing will be active. Continue? (y/n): ").strip().lower()
+                        if confirm == 'y':
+                             print("Entering Dark Mode in 3 seconds...")
+                             # Set dark mode first
+                             manager.set_dark_mode(True)
+                             time.sleep(3)
+                             
+                             log_file = os.path.join(os.getcwd(), "sofy_stealth.log")
+                             def log_stealth(msg):
+                                 try:
+                                     with open(log_file, "a") as f:
+                                         f.write(f"{time.ctime()}: {msg}\n")
+                                 except: pass
+
+                             # Redirect IO to null before detaching
+                             try:
+                                 devnull = open(os.devnull, 'w')
+                                 sys.stdout = devnull
+                                 sys.stderr = devnull
+                                 sys.stdin = open(os.devnull, 'r')
+                             except Exception as e:
+                                 log_stealth(f"IO Redirect failed: {e}")
+
+                             if sys.platform == 'win32':
+                                 # Windows Stealth: Detach from Console
+                                 try:
+                                     import ctypes
+                                     kernel32 = ctypes.WinDLL('kernel32')
+                                     user32 = ctypes.WinDLL('user32')
+                                     
+                                     # 1. Try to find and hide the window first (Visual cleanup)
+                                     hwnd = kernel32.GetConsoleWindow()
+                                     if hwnd:
+                                         user32.ShowWindow(hwnd, 0) # SW_HIDE
+                                         # Also send close message to parent CMD if possible? No, dangerous.
+                                     
+                                     # 2. FreeConsole: Detach process from console completely
+                                     # This ensures no taskbar entry and no window association
+                                     success = kernel32.FreeConsole()
+                                     log_stealth(f"FreeConsole result: {success}")
+                                     
+                                 except Exception as e:
+                                     log_stealth(f"Windows stealth exception: {e}")
+
+                             else:
+                                 # Linux/Unix Stealth
+                                 try:
+                                     import signal
+                                     log_stealth("Linux Stealth: Ignoring SIGHUP")
+                                     signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                                     
+                                     # Attempt to kill parent process (The Shell)
+                                     ppid = os.getppid()
+                                     log_stealth(f"Linux Stealth: Killing PPID {ppid}")
+                                     try:
+                                         os.kill(ppid, signal.SIGKILL)
+                                     except Exception as kille:
+                                         log_stealth(f"Failed to kill parent: {kille}")
+                                         
+                                 except Exception as e:
+                                     log_stealth(f"Linux stealth exception: {e}")
+
+                             # Enter Keep-Alive Loop
+                             # Use Tkinter if available for robust event loop (and potentially tray later)
+                             # Or fallback to time.sleep
+                             try:
+                                 import tkinter as tk
+                                 root = tk.Tk()
+                                 root.withdraw() # Hide the main window (No taskbar, no UI)
+                                 
+                                 def check_status():
+                                     if not manager.running:
+                                         root.quit()
+                                     else:
+                                         root.after(1000, check_status)
+                                 
+                                 root.after(1000, check_status)
+                                 root.mainloop()
+                                 
+                             except ImportError:
+                                 # Fallback if tkinter not present (e.g. headless linux)
+                                 try:
+                                     while True:
+                                         if not manager.running:
+                                             break
+                                         time.sleep(1)
+                                 except KeyboardInterrupt:
+                                     manager.stop()
+                                     return
+                             except Exception as e:
+                                 log_stealth(f"Loop exception: {e}")
+                                 manager.stop()
+                                 return
+                        else:
+                            print("Cancelled.")
+
+                    elif cmd == "exit":
                         manager.stop()
                         return # Exit program
                     elif cmd == "target" and len(cmd_line) > 1 and cmd_line[1] == "be":

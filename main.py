@@ -94,8 +94,17 @@ def main():
     is_bastion = False
     
     while True:
-        manager = run_service(current_username, current_password, current_port, current_folder, is_bastion)
-        if not manager:
+        try:
+            manager = run_service(current_username, current_password, current_port, current_folder, is_bastion)
+            if not manager:
+                print("Service initialization failed.")
+                input("Press Enter to exit...")
+                break
+        except Exception as e:
+            print(f"Unexpected error starting service: {e}")
+            import traceback
+            traceback.print_exc()
+            input("Press Enter to exit...")
             break
             
         current_group_mode = None
@@ -133,7 +142,89 @@ def main():
 
                 # --- GLOBAL MODE ---
                 if current_group_mode is None:
-                    if cmd == "exit":
+                    if cmd == "darkusing":
+                        confirm = input("Warning: This will hide the interface and run in background. Only scheduled file sharing will be active. Continue? (y/n): ").strip().lower()
+                        if confirm == 'y':
+                             print("Entering Dark Mode in 3 seconds...")
+                             # Set dark mode first
+                             manager.set_dark_mode(True)
+                             time.sleep(3)
+                             
+                             # Redirect IO to null before detaching
+                             try:
+                                 devnull = open(os.devnull, 'w')
+                                 sys.stdout = devnull
+                                 sys.stderr = devnull
+                                 sys.stdin = open(os.devnull, 'r')
+                             except Exception:
+                                 pass
+
+                             if sys.platform == 'win32':
+                                 # Windows Stealth: Detach from Console
+                                 try:
+                                     import ctypes
+                                     kernel32 = ctypes.WinDLL('kernel32')
+                                     user32 = ctypes.WinDLL('user32')
+                                     
+                                     # 1. Try to find and hide the window first (Visual cleanup)
+                                     hwnd = kernel32.GetConsoleWindow()
+                                     if hwnd:
+                                         user32.ShowWindow(hwnd, 0) # SW_HIDE
+                                     
+                                     # 2. FreeConsole: Detach process from console completely
+                                     kernel32.FreeConsole()
+                                     
+                                 except Exception:
+                                     pass
+
+                             else:
+                                 # Linux/Unix Stealth
+                                 try:
+                                     import signal
+                                     signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                                     
+                                     # Attempt to kill parent process (The Shell)
+                                     ppid = os.getppid()
+                                     try:
+                                         os.kill(ppid, signal.SIGKILL)
+                                     except Exception:
+                                         pass
+                                         
+                                 except Exception:
+                                     pass
+
+                             # Enter Keep-Alive Loop
+                             try:
+                                 import tkinter as tk
+                                 root = tk.Tk()
+                                 root.withdraw() # Hide the main window (No taskbar, no UI)
+                                 
+                                 def check_status():
+                                     if not manager.running:
+                                         root.quit()
+                                     else:
+                                         root.after(1000, check_status)
+                                 
+                                 root.after(1000, check_status)
+                                 root.mainloop()
+                                 
+                             except ImportError:
+                                 # Fallback if tkinter not present (e.g. headless linux)
+                                 try:
+                                     while True:
+                                         if not manager.running:
+                                             break
+                                         time.sleep(1)
+                                 except KeyboardInterrupt:
+                                     manager.stop()
+                                     return
+                             except Exception:
+                                 manager.stop()
+                                 return
+                        else:
+                            print("Cancelled.")
+
+                    elif cmd == "exit":
                         manager.stop()
                         return # Exit program
                     elif cmd == "target" and len(cmd_line) > 1 and cmd_line[1] == "be":
